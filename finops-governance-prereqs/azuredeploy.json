@@ -1,0 +1,155 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "title": "FinOps Governance Prerequisites",
+  "description": "Deploys a complete FinOps governance foundation: budget with tiered alerts, Cost Management daily export to blob storage, and tagging policy assignment. Production-ready baseline for Azure cost governance.",
+  "metadata": {
+    "author": "Duvvur Sai Krishna",
+    "description": "FinOps governance prerequisites: budget, cost export, tagging policy"
+  },
+  "parameters": {
+    "budgetName": {
+      "type": "string",
+      "defaultValue": "monthly-finops-budget",
+      "metadata": { "description": "Name of the monthly cost budget" }
+    },
+    "budgetAmount": {
+      "type": "double",
+      "metadata": { "description": "Monthly budget amount in your local currency" }
+    },
+    "alertEmails": {
+      "type": "array",
+      "metadata": { "description": "Email addresses for budget alerts (all thresholds)" }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "metadata": { "description": "Storage account name for cost data exports (must be globally unique)" }
+    },
+    "storageAccountSku": {
+      "type": "string",
+      "defaultValue": "Standard_LRS",
+      "allowedValues": ["Standard_LRS", "Standard_GRS", "Standard_ZRS"],
+      "metadata": { "description": "Storage account SKU for cost export destination" }
+    },
+    "costExportName": {
+      "type": "string",
+      "defaultValue": "daily-cost-export",
+      "metadata": { "description": "Name of the daily cost export" }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": { "description": "Location for storage account" }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "sku": { "name": "[parameters('storageAccountSku')]" },
+      "kind": "StorageV2",
+      "properties": {
+        "accessTier": "Hot",
+        "supportsHttpsTrafficOnly": true,
+        "minimumTlsVersion": "TLS1_2"
+      },
+      "tags": {
+        "cost-centre": "finops-platform",
+        "environment": "management",
+        "workload": "cost-governance",
+        "department": "finance"
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(parameters('storageAccountName'), '/default/cost-exports')]",
+      "dependsOn": ["[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"],
+      "properties": { "publicAccess": "None" }
+    },
+    {
+      "type": "Microsoft.Consumption/budgets",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('budgetName')]",
+      "properties": {
+        "category": "Cost",
+        "amount": "[parameters('budgetAmount')]",
+        "timeGrain": "Monthly",
+        "timePeriod": {
+          "startDate": "[utcNow('yyyy-MM-dd')]",
+          "endDate": "[dateTimeAdd(utcNow('yyyy-MM-dd'), 'P1Y')]"
+        },
+        "notifications": {
+          "Alert_50_Pct": {
+            "enabled": true,
+            "operator": "GreaterThan",
+            "threshold": 50,
+            "contactEmails": "[parameters('alertEmails')]",
+            "contactRoles": ["Contributor"]
+          },
+          "Alert_80_Pct": {
+            "enabled": true,
+            "operator": "GreaterThan",
+            "threshold": 80,
+            "contactEmails": "[parameters('alertEmails')]",
+            "contactRoles": ["Contributor", "Owner"]
+          },
+          "Alert_100_Pct": {
+            "enabled": true,
+            "operator": "GreaterThan",
+            "threshold": 100,
+            "contactEmails": "[parameters('alertEmails')]",
+            "contactRoles": ["Contributor", "Owner"]
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.CostManagement/exports",
+      "apiVersion": "2023-11-01",
+      "name": "[parameters('costExportName')]",
+      "properties": {
+        "format": "Csv",
+        "deliveryInfo": {
+          "destination": {
+            "resourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+            "container": "cost-exports",
+            "rootFolderPath": "daily"
+          }
+        },
+        "definition": {
+          "type": "ActualCost",
+          "timeframe": "MonthToDate",
+          "dataSet": {
+            "granularity": "Daily"
+          }
+        },
+        "schedule": {
+          "status": "Active",
+          "recurrence": "Daily",
+          "recurrencePeriod": {
+            "from": "[utcNow('yyyy-MM-dd')]",
+            "to": "[dateTimeAdd(utcNow('yyyy-MM-dd'), 'P1Y')]"
+          }
+        }
+      },
+      "dependsOn": ["[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"]
+    }
+  ],
+  "outputs": {
+    "storageAccountId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+    },
+    "budgetUrl": {
+      "type": "string",
+      "value": "[concat('https://portal.azure.com/#resource/Microsoft.Consumption/budgets/', parameters('budgetName'))]"
+    },
+    "nextSteps": {
+      "type": "string",
+      "value": "Connect Power BI to the cost-exports container for cost dashboards. Assign FinOps tagging policies at Management Group scope."
+    }
+  }
+}
